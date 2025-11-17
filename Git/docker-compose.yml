@@ -1,0 +1,131 @@
+﻿services:
+  postgres:
+    image: postgres
+    container_name: postgres   
+    volumes:
+      - pgdata:/var/lib/postgresql/data/
+      - ./postgresql.conf:/etc/postgresql.conf
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=mypassword
+      - POSTGRES_DB=postgres
+      - PGDATA=/var/lib/postgresql/data
+      - PGCONFIG=/etc/postgresql.conf
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - app-network
+    
+  pgbouncer:
+    image: edoburu/pgbouncer
+    container_name: pgbouncer
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=user
+      - DB_PASSWORD=mypassword
+      - DB_NAME=postgres
+      - POOL_MODE=transaction
+      - PGBOUNCER_IDLE_TRANSACTION_TIMEOUT=60
+      - PGBOUNCER_POOL_MODE=transaction
+      - PGBOUNCER_SERVER_RESET_QUERY_ALWAYS=0
+      - PGBOUNCER_SERVER_LIFETIME=3600
+      - PGBOUNCER_SERVER_IDLE_TIMEOUT=60
+      - PGBOUNCER_MAX_DB_CONNECTIONS=50
+      - PGBOUNCER_MAX_CLIENT_CONN=10000
+      - PGBOUNCER_RESERVE_POOL_SIZE=5
+      - PGBOUNCER_MIN_POOL_SIZE=2
+      - PGBOUNCER_DEFAULT_POOL_SIZE=16
+      - PGBOUNCER_IGNORE_STARTUP_PARAMETERS=extra_float_digits
+      - PGBOUNCER_AUTH_TYPE=md5
+      - PGBOUNCER_IDLE_TRANSACTION_TIMEOUT=60
+    ports:
+      - "15432:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - app-network
+    
+    
+
+  rabbitmq:
+        image: rabbitmq:3.13-management-alpine
+        container_name: rabbitmq
+        ports:
+            - "5672:5672"
+            - "15672:15672"
+        volumes:
+            - rabbitmq_data:/var/lib/rabbitmq
+        healthcheck:
+          test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+          interval: 30s
+          timeout: 10s
+          retries: 5
+          start_period: 20s
+        restart: unless-stopped
+        networks:
+            - app-network
+
+  producer:
+    build:
+      context: .
+      dockerfile: WebAPI/Dockerfile
+    container_name: producer
+    environment:
+      ASPNETCORE_ENVIRONMENT: Environment
+      DbSettings__ConnectionString: Host=pgbouncer;Port=5432;Database=postgres;User Id=user;Password=mypassword;
+      DbSettings__MigrationConnectionString: Host=pgbouncer;Port=5432;Database=postgres;User Id=user;Password=mypassword;
+      RabbitMqSettings__HostName: rabbitmq
+      RabbitMqSettings__Port: 5672
+      RabbitMqSettings__OrderCreatedQueue: "oms.order.created"
+      ASPNETCORE_URLS: http://+:8080
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "5000:8080"
+      - "5001:8081"
+    networks:
+      - app-network
+    restart: unless-stopped
+    
+
+  consumer:
+    build:
+      context: .
+      dockerfile: WebAPI.Consumer/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Environment
+      DbSettings__ConnectionString: Host=pgbouncer;Port=5432;Database=postgres;User Id=user;Password=mypassword;
+      DbSettings__MigrationConnectionString: Host=pgbouncer;Port=5432;Database=postgres;User Id=user;Password=mypassword;
+      RabbitMqSettings__HostName: rabbitmq
+      RabbitMqSettings__Port: 5672
+      RabbitMqSettings__OrderCreatedQueue: "oms.order.created"
+      RabbitMqSettings__BatchSize: 100
+      RabbitMqSettings__BatchTimeoutSeconds: 1
+      HttpClient__Oms__BaseAddress: http://producer:8080/
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - app-network
+    deploy:
+      replicas: 5
+    
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+    pgdata:
+    rabbitmq_data:
