@@ -45,6 +45,38 @@ namespace WebAPI.Controllers.V1
             });
         }
 
+        [HttpPost("batch-update")]
+        public async Task<ActionResult<V1UpdateOrderStatusResponse>> V1BatchUpadate([FromBody] V1UpdateOrdersStatusRequest request, CancellationToken token)
+        {
+            /*var validationResult = await validatorFactory.GetValidator<V1CreateOrderRequest>().ValidateAsync(request, token);
+            if (!validationResult.IsValid)
+            {
+                return BadRequest(validationResult.ToDictionary());
+            }*/
+            try
+            {
+                await orderService.UpdateOrderStatus(
+                    [new DAL.Models.V1UpdateOrderStatus
+                    {
+                        Status = request.NewStatus,
+                        OrderIds = request.OrderIds
+                    }],
+                    token
+                );
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(ex.Message);
+            }
+
+
+            return Ok(new V1UpdateOrderStatusResponse
+            {
+
+            });
+        }
+
+
         [HttpGet("query")]
         public async Task<ActionResult<V1QueryOrdersResponse>> V1QueryOrders([FromBody] V1QueryOrdersRequest request, CancellationToken token)
         {
@@ -98,11 +130,11 @@ namespace WebAPI.Controllers.V1
        [HttpPost("log-order")]
         public async Task<ActionResult<V1AuditLogOrderResponse>> V1GetOrderByAudit([FromBody] V1AuditLogOrderRequest request, CancellationToken token)
         {
-            var validationResult = await validatorFactory.GetValidator<V1AuditLogOrderRequest>().ValidateAsync(request, token);
+            /*var validationResult = await validatorFactory.GetValidator<V1AuditLogOrderRequest>().ValidateAsync(request, token);
             if (!validationResult.IsValid)
             {
                 return BadRequest(validationResult.ToDictionary());
-            }
+            }*/
             var res = await orderService.LogOrder(request.Orders.Select(x => new AuditLogUnit
             {
                 OrderId = x.OrderId,

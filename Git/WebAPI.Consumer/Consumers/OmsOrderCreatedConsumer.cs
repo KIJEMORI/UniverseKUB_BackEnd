@@ -35,7 +35,7 @@ namespace WebAPI.Consumer.Consumers
             _connection = await _factory.CreateConnectionAsync(cancellationToken);
             _channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
             await _channel.QueueDeclareAsync(
-                queue: _rabbitMqSettings.Value.OrderCreatedQueue,
+                queue: _rabbitMqSettings.Value.OrderCreated.Queue,
                 durable: false,
                 exclusive: false,
                 autoDelete: false,
@@ -110,7 +110,7 @@ namespace WebAPI.Consumer.Consumers
             };
 
             await _channel.BasicConsumeAsync(
-                queue: _rabbitMqSettings.Value.OrderCreatedQueue,
+                queue: _rabbitMqSettings.Value.OrderCreated.Queue,
                 autoAck: false,
                 consumer: _consumer,
                 cancellationToken: cancellationToken);

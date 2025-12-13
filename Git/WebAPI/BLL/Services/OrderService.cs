@@ -1,4 +1,4 @@
-﻿using WebAPI.BLL.Models;
+﻿
 using WebAPI.DAL.Interfaces;
 using WebAPI.DAL.Models;
 using WebAPI.DAL;
@@ -11,6 +11,11 @@ using WebAPI.Config;
 using Newtonsoft.Json.Linq;
 using System.Transactions;
 using Microsoft.AspNetCore.Http.HttpResults;
+using WebAPI.Base;
+using WebAPI.BLL.Models;
+using Models.Dto.Common;
+using OrderUnit = WebAPI.BLL.Models.OrderUnit;
+using OrderItemUnit = WebAPI.BLL.Models.OrderItemUnit;
 
 namespace WebAPI.BLL.Services
 {
@@ -115,7 +120,18 @@ namespace WebAPI.BLL.Services
                 messagesToPublish = orderUnits;
 
                 var messages = orderUnits;
-                await _rabbitMqService.Publish(messages, settings.Value.OrderCreatedQueue, token);
+
+                var message = new OmsOrderCreatedMessage[messages.Length];
+
+                for(int i =0; i < messages.Length; i++)
+                {
+                    message[i] = new OmsOrderCreatedMessage
+                    {
+                        Message = messages[i],
+                    };
+                }
+                
+                await _rabbitMqService.Publish(message, token);
 
 
 
@@ -123,9 +139,19 @@ namespace WebAPI.BLL.Services
             }
             catch (Exception e)
             {
-                if(transaction.Connection != null){
-                    await transaction.RollbackAsync(token);
+                try
+                {
+                   await transaction.RollbackAsync(token);
                 }
+                catch (InvalidOperationException)
+                {
+                   
+                }
+                catch (Exception rollbackEx)
+                {
+                    
+                }
+
                 throw;
             }
 
@@ -166,44 +192,74 @@ namespace WebAPI.BLL.Services
 
         public async Task<OrderUnit[]> LogOrder(AuditLogUnit[] model, CancellationToken token)
         {
-            List<V1AuditLogDal> v1AuditLogDals = new List<V1AuditLogDal>();
-            foreach (var x in model) {
-                V1AuditLogDal[] logs = await
-                auditLogRepository.Query(
-                    new QueryAuditLogDalModel
-                    {
-                        OrderId = x.OrderId,
-                        OrderItemId = x.OrderItemId,
-                        CustomerId = x.CustomerId,
-                        OrderStatus = x.OrderStatus
-                    }
-                    , token
-                );
-
-                foreach (var log in logs)
+       
+            var orderIds = model.Select(x => x.OrderId).Distinct().ToArray();
+            var customerIds = model.Select(x => x.CustomerId).Distinct().ToArray();
+           
+            V1AuditLogDal[] searched = await auditLogRepository.Query(
+                new QueryAuditLogDalModel
                 {
-                    v1AuditLogDals.Add(log);
-                }
-            }
-
-            var searched = v1AuditLogDals.ToArray();
-
-            var res = new List<OrderUnit>();
-
-            foreach (var x in searched) {
-                var y = await GetOrders(new QueryOrderItemsModel
-                {
-                    Ids = [x.OrderId],
-                    CustomerIds = [x.CustomerId],
-                    IncludeOrderItems = true
-                }, token);
-                foreach (var log in y)
-                {
-                    res.Add(log);
-                }
-            }
-
+                    OrderIds = orderIds, // Передаем МАССИВ ID
+                    CustomerIds = customerIds, // Передаем МАССИВ ID
+                                               // OrderId/CustomerId/OrderStatus = null, // Убираем фильтры по одиночным значениям
+                },
+                token
+            );
+            
+            var res = await GetOrders(new QueryOrderItemsModel
+            {
+                Ids = orderIds, // Передаем МАССИВ ID
+                CustomerIds = customerIds, // Передаем МАССИВ ID
+                IncludeOrderItems = true
+            }, token);
+            
             return res.ToArray();
+
+        }
+
+        public async Task UpdateOrderStatus(V1UpdateOrderStatus[] model, CancellationToken token)
+        {
+            await using var transaction = await unitOfWork.BeginTransactionAsync(token);
+            try
+            {
+
+                foreach (var batch in model)
+                {
+                    // Здесь должен быть ОДИН вызов к БД, обновляющий все OrderIds в этом batch
+                    await auditLogRepository.Update(batch, token);
+                }
+
+                
+                var message = model.SelectMany(batch =>
+                    batch.OrderIds.Select(orderId =>
+                        new OmsOrderStatusChangedMessage
+                        {
+                            Message = new UpdateOrderStatus
+                            {
+                                Status = batch.Status,
+                                OrderId = orderId
+                            },
+                        }
+                    )
+                ).ToArray();
+
+
+
+
+
+
+                await _rabbitMqService.Publish(message, token);
+
+                await transaction.CommitAsync(token);
+            }
+            catch (Exception ex)
+            {
+                if(transaction.Connection != null){
+                    await transaction.RollbackAsync(token);
+                }
+                throw;
+            }
+
 
         }
 
