@@ -2,7 +2,7 @@
 {
     public class UpdateOrderStatus
     {
-        public long OrderId { get; set; }
+        public long[] OrderIds { get; set; }
         public string Status { get; set; }
     }
 }

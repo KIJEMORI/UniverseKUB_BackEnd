@@ -3,6 +3,7 @@ using RabbitMQ.Client.Events;
 using RabbitMQ.Client;
 using System.Text;
 using WebAPI.Config;
+using WebAPI.Consumer.Config;
 
 namespace WebAPI.Consumer.Base
 {
@@ -78,7 +79,7 @@ namespace WebAPI.Consumer.Base
         private async Task OnMessageReceived(object sender, BasicDeliverEventArgs ea)
         {
             await _processingSemaphore.WaitAsync();
-
+            
             try
             {
                 var message = Encoding.UTF8.GetString(ea.Body.ToArray());
@@ -128,7 +129,11 @@ namespace WebAPI.Consumer.Base
             try
             {
                 
-                var messages = currentBatch.Select(x => x.Message.FromJson<T>()).ToArray();
+                var messages = currentBatch
+                    .Select(x => x.Message.FromJson<RabbitMqEnvelope<T>>())
+                    .Where(envelope => envelope?.Message != null)
+                    .Select(envelope => envelope.Message)
+                    .ToArray();
                 //Console.WriteLine(currentBatch.Count());
                 // Ваша логика обработки батча
                 await ProcessMessages(messages);

@@ -35,20 +35,16 @@ namespace WebAPI.Jobs
 
                 await orderService.BatchInsert(orders, stoppingToken);
 
-                var updates = Enumerable.Range(1, 10)
-                    .Select(_ =>
-                    {
-                        Random rand = new Random();
+                Random rand = new Random();
 
-                        var send = fixture.Build<V1UpdateOrderStatus>()
-                            .With(x => x.Status, "Update")
-                            .With(x => x.OrderIds, [rand.Next(5421, 9000)])
-                            .Create();
-
-                        return send;
-
-                    })
-                    .ToArray();
+                var updates =
+                   Enumerable.Range(1, 10)
+                   .Select(_ =>
+                        fixture.Build<UpdateOrderStatus>()
+                        .With(x => x.Status, "Update")
+                        .With(x => x.OrderIds, [rand.Next(5421, 9000)])
+                        .Create()
+                   ).ToArray();
 
                 await orderService.UpdateOrderStatus(updates, stoppingToken);
 

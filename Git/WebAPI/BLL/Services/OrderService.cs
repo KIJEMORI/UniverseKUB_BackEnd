@@ -16,6 +16,8 @@ using WebAPI.BLL.Models;
 using Models.Dto.Common;
 using OrderUnit = WebAPI.BLL.Models.OrderUnit;
 using OrderItemUnit = WebAPI.BLL.Models.OrderItemUnit;
+using Confluent.Kafka;
+using System;
 
 namespace WebAPI.BLL.Services
 {
@@ -95,25 +97,6 @@ namespace WebAPI.BLL.Services
 
                     
 
-                    List<V1AuditLogDal> listV1AuditLogDal = new List<V1AuditLogDal>();
-                    foreach (var orderItem in order.OrderItems)
-                    {
-                        orderItem.Id = insert_2[index_2].Id;
-
-                        listV1AuditLogDal.Add(new V1AuditLogDal
-                        {
-                            OrderId = order.Id,
-                            OrderItemId = orderItem.Id,
-                            CustomerId = order.CustomerId,
-                            OrderStatus = "Created",
-                            CreatedAt = now,
-                            UpdatedAt = now
-                        });
-
-                        index_2++;
-                    }
-
-                    var inser_audit_log = await auditLogRepository.BulkInsert(listV1AuditLogDal.ToArray(), token);
                 }
                 await transaction.CommitAsync(token);
 
@@ -192,11 +175,13 @@ namespace WebAPI.BLL.Services
 
         public async Task<OrderUnit[]> LogOrder(AuditLogUnit[] model, CancellationToken token)
         {
-       
+
+            await using var transaction = await unitOfWork.BeginTransactionAsync(token);
+
             var orderIds = model.Select(x => x.OrderId).Distinct().ToArray();
             var customerIds = model.Select(x => x.CustomerId).Distinct().ToArray();
-           
-            V1AuditLogDal[] searched = await auditLogRepository.Query(
+
+            /*V1AuditLogDal[] searched = await auditLogRepository.Query(
                 new QueryAuditLogDalModel
                 {
                     OrderIds = orderIds, // Передаем МАССИВ ID
@@ -205,52 +190,101 @@ namespace WebAPI.BLL.Services
                 },
                 token
             );
-            
+
             var res = await GetOrders(new QueryOrderItemsModel
             {
                 Ids = orderIds, // Передаем МАССИВ ID
                 CustomerIds = customerIds, // Передаем МАССИВ ID
                 IncludeOrderItems = true
             }, token);
-            
+
             return res.ToArray();
+*/
+
+            try
+            {
+                var time = DateTimeOffset.UtcNow;
+                List<V1AuditLogDal> listV1AuditLogDal = new List<V1AuditLogDal>();
+                foreach (var mod in model)
+                {
+
+                    listV1AuditLogDal.Add(new V1AuditLogDal
+                    {
+                        OrderId = mod.Id,
+                        OrderItemId = mod.OrderItemId,
+                        CustomerId = mod.CustomerId,
+                        OrderStatus = mod.OrderStatus,
+                        CreatedAt = time,
+                        UpdatedAt = time
+                    });
+                }
+
+                var res = await auditLogRepository.BulkInsert(listV1AuditLogDal.ToArray(), token);
+
+                await transaction.CommitAsync(token);
+
+                var res_2 = await GetOrders(new QueryOrderItemsModel
+                {
+                    Ids = orderIds, // Передаем МАССИВ ID
+                    CustomerIds = customerIds, // Передаем МАССИВ ID
+                    IncludeOrderItems = true
+                }, token);
+
+                return res_2.ToArray();
+            }
+            catch (Exception ex)
+            {
+                if (transaction.Connection != null)
+                {
+                    await transaction.RollbackAsync(token);
+                }
+                throw;
+            }
+
+
 
         }
 
-        public async Task UpdateOrderStatus(V1UpdateOrderStatus[] model, CancellationToken token)
+        public async Task<OrderUnit[]> UpdateOrderStatus(UpdateOrderStatus[] model, CancellationToken token)
         {
             await using var transaction = await unitOfWork.BeginTransactionAsync(token);
             try
             {
 
-                foreach (var batch in model)
-                {
-                    // Здесь должен быть ОДИН вызов к БД, обновляющий все OrderIds в этом batch
-                    await auditLogRepository.Update(batch, token);
+                List<V1OrderDal> messagesList = new List<V1OrderDal>();
+
+                foreach (var req in model) {
+
+                    var res = await orderRepository.Update(
+                        new UpdateOrderDalModel
+                        {
+                            Ids = req.OrderIds,
+                            NewStatus = req.Status
+                        },
+                        token
+                    );
+                    messagesList.AddRange(res);
                 }
 
-                
-                var message = model.SelectMany(batch =>
-                    batch.OrderIds.Select(orderId =>
-                        new OmsOrderStatusChangedMessage
-                        {
-                            Message = new UpdateOrderStatus
-                            {
-                                Status = batch.Status,
-                                OrderId = orderId
-                            },
-                        }
-                    )
-                ).ToArray();
+
+                await transaction.CommitAsync(token);
+
+                var messages = messagesList.ToArray();
 
 
+                var message = new OmsOrderStatusChangedMessage[model.Length];
 
-
-
+                for (int i = 0; i < model.Length; i++)
+                {
+                    message[i] = new OmsOrderStatusChangedMessage
+                    {
+                        Message = model[i]
+                    };
+                }
 
                 await _rabbitMqService.Publish(message, token);
 
-                await transaction.CommitAsync(token);
+                return Map(messages);
             }
             catch (Exception ex)
             {
@@ -274,6 +308,7 @@ namespace WebAPI.BLL.Services
                 DeliveryAddress = x.DeliveryAddress,
                 TotalPriceCents = x.TotalPriceCents,
                 TotalPriceCurrency = x.TotalPriceCurrency,
+                Status = x.Status,
                 CreatedAt = x.CreatedAt,
                 UpdatedAt = x.UpdatedAt,
                 OrderItems = orderItemLookup?[x.Id].Select(o => new OrderItemUnit

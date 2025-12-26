@@ -13,6 +13,7 @@ namespace WebAPI.Consumer.Consumers
     IServiceProvider serviceProvider)
     : BaseBatchMessageConsumer<OrderUnit>(rabbitMqSettings.Value, s => s.OrderCreated)
     {
+        private static int globalBatchCount = 0;
         protected override async Task ProcessMessages(OrderUnit[] messages)
         {
             
@@ -22,28 +23,56 @@ namespace WebAPI.Consumer.Consumers
             try
             {
 
+                if (messages == null || messages.Length == 0)
+                {
+                    //Console.WriteLine("DEBUG: Массив messages пуст или null");
+                    return;
+                }
 
-                await client.LogOrder
-                    (new V1AuditLogOrderRequest
+                var ordersList = new List<V1AuditLogOrderRequest.LogOrder>();
+
+                foreach (var m in messages)
+                {
+                    if (m.OrderItems == null)
                     {
-                        Orders = messages.SelectMany(
-                            order => (order.OrderItems as IEnumerable<OrderItemUnit> ?? Enumerable.Empty<OrderItemUnit>()).Select(
-                                ol =>
-                                {
-                                    var res = new V1AuditLogOrderRequest.LogOrder
-                                    {
-                                        OrderId = order.Id,
-                                        OrderItemId = ol.Id,
-                                        CustomerId = order.CustomerId,
-                                        OrderStatus = "Created"
-                                    };
-                                    return res;
-                                }
-                            )
-                        )
-                        .ToArray()
-                    },
-                    CancellationToken.None);
+                        //Console.WriteLine($"DEBUG: У заказа {m.Id} OrderItems == null");
+                        continue;
+                    }
+
+                    foreach (var item in m.OrderItems)
+                    {
+                        ordersList.Add(new V1AuditLogOrderRequest.LogOrder
+                        {
+                            OrderId = m.Id,
+                            OrderItemId = item.Id,
+                            CustomerId = m.CustomerId,
+                            OrderStatus = "Created",
+                            
+                        });
+                    }
+                }
+
+                if (ordersList.Count > 0)
+                {
+
+                    int currentBatch = Interlocked.Increment(ref globalBatchCount);
+                    if (currentBatch % 5 == 0)
+                    {
+                        throw new Exception("FFFF!!!!");
+
+                    }
+                    await client.LogOrder
+                        (new V1AuditLogOrderRequest
+                        {
+                            Orders = ordersList.ToArray(),
+                        },
+                        CancellationToken.None);
+                }
+                else
+                {
+                    throw new Exception("Пустое сообщение");
+                }
+
             }
             catch (Exception ex)
             {

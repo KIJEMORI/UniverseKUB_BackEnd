@@ -1,4 +1,5 @@
 ﻿using Dapper;
+using Models.Dto.Common;
 using System.Text;
 using WebAPI.DAL.Interfaces;
 using WebAPI.DAL.Models;
@@ -35,6 +36,7 @@ namespace WebAPI.DAL.Repositories
                 delivery_address,
                 total_price_cents,
                 total_price_currency,
+                status,
                 created_at,
                 updated_at;
         ";
@@ -54,16 +56,17 @@ namespace WebAPI.DAL.Repositories
         public async Task<V1OrderDal[]> Query(QueryOrdersDalModel model, CancellationToken token)
         {
             var sql = new StringBuilder(@"
-            select 
-                id,
-                customer_id,
-                delivery_address,
-                total_price_cents,
-                total_price_currency,
-                created_at,
-                updated_at
-            from orders
-        ");
+                select 
+                    id,
+                    customer_id,
+                    delivery_address,
+                    total_price_cents,
+                    total_price_currency,
+                    status,
+                    created_at,
+                    updated_at
+                from orders
+            ");
 
             // тот же динамический тип данных 
             var param = new DynamicParameters();
@@ -107,6 +110,34 @@ namespace WebAPI.DAL.Repositories
                 sql.ToString(), param, cancellationToken: token));
 
             return res.ToArray();
+        }
+
+        public async Task<V1OrderDal[]> Update(UpdateOrderDalModel model, CancellationToken token)
+        {
+
+            var sql = @"
+                update orders
+                    set Status = @Status
+                where
+                    id = ANY(@Ids)
+                returning 
+                    id,
+                    customer_id,
+                    delivery_address,
+                    total_price_cents,
+                    total_price_currency,
+                    status,
+                    created_at,
+                    updated_at;
+            ";
+
+            var conn = await unitOfWork.GetConnection(token);
+            var res = await conn.QueryAsync<V1OrderDal>(new CommandDefinition(
+                sql.ToString(), new { Status = model.NewStatus, Ids = model.Ids }, cancellationToken: token    
+            ));
+
+            return res.ToArray();
+
         }
     }
 }

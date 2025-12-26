@@ -56,10 +56,10 @@ namespace WebAPI.Controllers.V1
             try
             {
                 await orderService.UpdateOrderStatus(
-                    [new DAL.Models.V1UpdateOrderStatus
+                    [new DAL.Models.UpdateOrderStatus
                     {
-                        Status = request.NewStatus,
-                        OrderIds = request.OrderIds
+                        OrderIds = request.OrderIds,
+                        Status = request.NewStatus
                     }],
                     token
                 );
